@@ -1,0 +1,41 @@
+
+# Dependency directories
+node_modules/
+jspm_packages/
+bower_components/
+venv/
+.venv/
+env/
+.env
+bin/
+obj/
+
+# Build outputs
+dist/
+build/
+out/
+target/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
