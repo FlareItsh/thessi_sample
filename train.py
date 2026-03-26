@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from model import unet_model, dice_coef, dice_loss
 
 # Directories
-DATA_DIR = "/home/flare/Dev/Thesis_Sample/processed_data"
+DATA_DIR = "/Users/MYPC1/Desktop/vs code/thesis/thessi_sample/processed_data"
 IMG_SIZE = (256, 256)
 BATCH_SIZE = 16
 EPOCHS = 20

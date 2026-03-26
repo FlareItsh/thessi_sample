@@ -5,11 +5,11 @@ import glob
 from pathlib import Path
 
 # Paths to YOLO dataset
-DATASET_DIR = "/home/flare/Dev/Thesis_Sample/data"
+DATASET_DIR = "/Users/MYPC1/Desktop/vs code/thesis/thessi_sample/data"
 SPLITS = ["train", "valid", "test"]
 
 # Output paths
-OUTPUT_DIR = "/home/flare/Dev/Thesis_Sample/processed_data"
+OUTPUT_DIR = "/Users/MYPC1/Desktop/vs code/thesis/thessi_sample/processed_data"
 IMG_HEIGHT, IMG_WIDTH = 256, 256
 
 def dull_razor(img):
