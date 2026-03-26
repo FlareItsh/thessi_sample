@@ -30,11 +30,37 @@ python3 -m venv venv
 source venv/bin/activate
 
 # 3. Install the required dependencies
-pip install flask opencv-python
+pip install -r requirements.txt
 
-# 4. Run the Flask web server
+# 4. (Optional) Run the Flask web server
 python3 app.py
 ```
+
+### Retraining the Model
+
+If you have a new dataset or want to retrain the U-Net model from scratch:
+
+#### 1. Data Preprocessing
+Run the preprocessing script to prepare the images and masks. This script implements the **DullRazor** algorithm for hair removal and optimizes the color space using the **CIE L*a*b*** 'a' channel to highlight inflammation.
+
+```bash
+python3 preprocess.py
+```
+
+#### 2. Model Training
+Run the training script. It will use the processed data to train a U-Net architecture with **Dice Loss** and **Dice Coefficient** metrics. If a GPU (CUDA) is detected, TensorFlow will automatically use it.
+
+```bash
+python3 train.py
+```
+
+#### 3. Verification
+You can verify the preprocessing and augmentation pipeline by running:
+
+```bash
+python3 verify_pipeline.py
+```
+This generates a `pipeline_verification.png` file showing the visual stages of the pipeline.
 
 This will start the backend server at `http://localhost:5000`. Open this URL in your web browser to use the Acne Detector Pro.
 

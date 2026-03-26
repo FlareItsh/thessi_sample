@@ -5,3 +5,4 @@ tensorflow
 scikit-learn
 albumentations
 matplotlib
+mediapipe
