@@ -1,52 +1,46 @@
 import albumentations as A
 import cv2
-import numpy as np
-import os
-import glob
 
-def get_train_augmentation():
+
+def get_train_augmentation(img_size=256):
     """
-    Returns an Albumentations pipeline for training data augmentation.
+    Segmentation-compatible augmentation pipeline.
+    Both image and mask are transformed identically for geometric transforms.
+    Colour transforms are applied only to the image.
     """
     return A.Compose([
-        A.Rotate(limit=45, p=0.7),
+        # Geometric (applied to both image AND mask)
         A.HorizontalFlip(p=0.5),
-        A.VerticalFlip(p=0.5),
-        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
-        A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=10, p=0.3),
-        A.Resize(256, 256),
-    ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], min_visibility=0.3))
+        A.VerticalFlip(p=0.3),
+        A.Rotate(limit=30, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+        A.ShiftScaleRotate(
+            shift_limit=0.05,
+            scale_limit=0.1,
+            rotate_limit=15,
+            border_mode=cv2.BORDER_REFLECT_101,
+            p=0.4,
+        ),
+        A.ElasticTransform(
+            alpha=40, sigma=40 * 0.05,
+            p=0.2,
+        ),
 
-def augment_sample(image_path, label_path):
-    """
-    Demonstrates augmentation on a single sample.
-    """
-    image = cv2.imread(image_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    
-    bboxes = []
-    class_labels = []
-    
-    with open(label_path, 'r') as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) >= 5:
-                # YOLO format: class x_center y_center width height
-                cls = int(parts[0])
-                bbox = list(map(float, parts[1:5]))
-                bboxes.append(bbox)
-                class_labels.append(cls)
-                
-    transform = get_train_augmentation()
-    transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
-    
-    aug_image = transformed['image']
-    aug_bboxes = transformed['bboxes']
-    
-    return cv2.cvtColor(aug_image, cv2.COLOR_RGB2BGR), aug_bboxes
+        # Colour / intensity (applied only to image, not mask)
+        A.RandomBrightnessContrast(
+            brightness_limit=0.15, contrast_limit=0.15, p=0.4
+        ),
+        A.GaussNoise(var_limit=(5.0, 25.0), p=0.2),
+        A.GaussianBlur(blur_limit=(3, 5), p=0.2),
 
-if __name__ == "__main__":
-    # Example usage:
-    # img, bboxes = augment_sample("sample.jpg", "sample_labels.txt")
-    # cv2.imwrite("augmented_sample.jpg", img)
-    print("Augmentation script initialized.")
+        # Final resize to guarantee correct dimensions
+        A.Resize(img_size, img_size),
+    ])
+
+
+def get_valid_augmentation(img_size=256):
+    """
+    Validation / test augmentation — resize only, no randomness.
+    """
+    return A.Compose([
+        A.Resize(img_size, img_size),
+    ])
