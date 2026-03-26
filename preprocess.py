@@ -1,6 +1,6 @@
 import os
 import cv2
-import random
+import numpy as np
 import glob
 from pathlib import Path
 
@@ -10,13 +10,58 @@ SPLITS = ["train", "valid", "test"]
 
 # Output paths
 OUTPUT_DIR = "/home/flare/Dev/Thesis_Sample/processed_data"
-PATCH_SIZE = 64
+IMG_HEIGHT, IMG_WIDTH = 256, 256
 
-def get_yolo_boxes(label_path, img_width, img_height):
-    """Reads YOLO format txt file and returns a list of bounding boxes (x, y, w, h) in pixels."""
-    boxes = []
+def dull_razor(img):
+    """
+    Implements the DullRazor algorithm for hair removal using morphological operations.
+    """
+    # 1. Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # 2. Black-Hat transformation to identify hair-like structures
+    # A 7x7 or 9x9 kernel is usually effective for hairs
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+    
+    # 3. Thresholding to create a mask for hairs
+    _, mask = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
+    
+    # 4. Inpaint the hair regions using the original image
+    # Telea's algorithm is fast and effective for linear structures like hair
+    inpainted = cv2.inpaint(img, mask, 1, cv2.INPAINT_TELEA)
+    
+    return inpainted
+
+def optimize_color_space(img):
+    """
+    Converts image to CIE L*a*b* and isolates the 'a' channel.
+    Applies CLAHE to the 'L' channel for lighting normalization.
+    """
+    # Convert BGR to Lab
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
+    l, a, b = cv2.split(lab)
+    
+    # Apply CLAHE to L channel
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_enhanced = clahe.apply(l)
+    
+    # Merge optimized channels (we specifically keep 'a' as it highlights inflammation)
+    # For U-Net, we might use a 3-channel input or just the 'a' channel.
+    # Here we return the full Lab with enhanced L and the original 'a' channel.
+    lab_enhanced = cv2.merge((l_enhanced, a, b))
+    
+    # Return both the enhanced Lab and specifically the 'a' channel for visualization/analysis
+    return lab_enhanced, a
+
+def get_yolo_masks(label_path, img_width, img_height):
+    """
+    Reads YOLO format txt file and generates a binary mask where 1 = acne, 0 = skin.
+    """
+    mask = np.zeros((img_height, img_width), dtype=np.uint8)
+    
     if not os.path.exists(label_path):
-        return boxes
+        return mask
     
     with open(label_path, 'r') as f:
         lines = f.readlines()
@@ -26,25 +71,27 @@ def get_yolo_boxes(label_path, img_width, img_height):
                 # YOLO format: class x_center y_center width height (normalized)
                 x_center, y_center, w, h = map(float, parts[1:5])
                 
-                # Convert to pixel coordinates
+                # Convert to pixel coordinates for the bounding box
                 w_px = int(w * img_width)
                 h_px = int(h * img_height)
-                x_px = int((x_center * img_width) - (w_px / 2))
-                y_px = int((y_center * img_height) - (h_px / 2))
+                x1 = int((x_center * img_width) - (w_px / 2))
+                y1 = int((y_center * img_height) - (h_px / 2))
+                x2 = x1 + w_px
+                y2 = y1 + h_px
                 
-                boxes.append((x_px, y_px, w_px, h_px))
-    return boxes
+                # Fill the rectangle in the mask
+                cv2.rectangle(mask, (max(0, x1), max(0, y1)), (min(img_width, x2), min(img_height, y2)), 1, -1)
+                
+    return mask
 
-def extract_patches():
-    # Create output directories
+def process_dataset():
+    """
+    Full pipeline processing: Hair removal -> Color Optimization -> Mask Generation.
+    """
     for split in SPLITS:
-        os.makedirs(os.path.join(OUTPUT_DIR, split, "acne"), exist_ok=True)
-        os.makedirs(os.path.join(OUTPUT_DIR, split, "clear"), exist_ok=True)
+        os.makedirs(os.path.join(OUTPUT_DIR, split, "images"), exist_ok=True)
+        os.makedirs(os.path.join(OUTPUT_DIR, split, "masks"), exist_ok=True)
 
-    acne_count = 0
-    clear_count = 0
-
-    for split in SPLITS:
         images_dir = os.path.join(DATASET_DIR, split, "images")
         labels_dir = os.path.join(DATASET_DIR, split, "labels")
         
@@ -56,70 +103,36 @@ def extract_patches():
             if img is None:
                 continue
             
-            img_height, img_width = img.shape[:2]
+            # 1. Preprocessing & Hair Removal
+            img_clean = dull_razor(img)
             
-            # Find corresponding label file
+            # Median Blurring (kernel size 5x5)
+            img_blurred = cv2.medianBlur(img_clean, 5)
+            
+            # 2. Color Space Optimization
+            lab_enhanced, a_channel = optimize_color_space(img_blurred)
+            
+            # For the segmentation model, we use the 'a' channel as input
+            # since it strongest highlights acne inflammation.
+            # We resize to a fixed input size (e.g., 256x256).
+            img_final = cv2.resize(a_channel, (IMG_WIDTH, IMG_HEIGHT))
+            
+            # 3. Generate Binary Mask
+            img_h, img_w = img.shape[:2]
             base_name = os.path.splitext(os.path.basename(img_path))[0]
             label_path = os.path.join(labels_dir, f"{base_name}.txt")
             
-            boxes = get_yolo_boxes(label_path, img_width, img_height)
+            mask = get_yolo_masks(label_path, img_w, img_h)
+            mask_final = cv2.resize(mask, (IMG_WIDTH, IMG_HEIGHT), interpolation=cv2.INTER_NEAREST)
             
-            # 1. Extract positive (Acne) patches
-            for i, (x, y, w, h) in enumerate(boxes):
-                # Add some padding/context
-                pad_x = w // 4
-                pad_y = h // 4
-                
-                x1 = max(0, x - pad_x)
-                y1 = max(0, y - pad_y)
-                x2 = min(img_width, x + w + pad_x)
-                y2 = min(img_height, y + h + pad_y)
-                
-                patch = img[y1:y2, x1:x2]
-                
-                if patch.size > 0:
-                    patch_resized = cv2.resize(patch, (PATCH_SIZE, PATCH_SIZE))
-                    out_path = os.path.join(OUTPUT_DIR, split, "acne", f"{base_name}_acne_{i}.jpg")
-                    cv2.imwrite(out_path, patch_resized)
-                    acne_count += 1
+            # Save results
+            out_img_path = os.path.join(OUTPUT_DIR, split, "images", f"{base_name}.png")
+            out_mask_path = os.path.join(OUTPUT_DIR, split, "masks", f"{base_name}_mask.png")
             
-            # 2. Extract negative (Clear) patches
-            # Sample random regions and ensure they don't significantly overlap with any acne box
-            num_negative = min(len(boxes) * 2, 5) # Try to extract up to twice as many negative patches or at least 5
-            attempts = 0
-            neg_extracted = 0
-            
-            while neg_extracted < num_negative and attempts < 20:
-                attempts += 1
-                # Random patch size similar to average acne size or a fixed size
-                neg_w, neg_h = PATCH_SIZE, PATCH_SIZE
-                
-                if img_width <= neg_w or img_height <= neg_h:
-                    continue
-                    
-                rx = random.randint(0, img_width - neg_w)
-                ry = random.randint(0, img_height - neg_h)
-                
-                # Check overlap with existing acne boxes
-                overlap = False
-                for (ax, ay, aw, ah) in boxes:
-                    # Simple rectangle intersection check
-                    if (rx < ax + aw and rx + neg_w > ax and
-                        ry < ay + ah and ry + neg_h > ay):
-                        overlap = True
-                        break
-                
-                if not overlap:
-                    patch = img[ry:ry+neg_h, rx:rx+neg_w]
-                    if patch.size > 0:
-                        patch_resized = cv2.resize(patch, (PATCH_SIZE, PATCH_SIZE))
-                        out_path = os.path.join(OUTPUT_DIR, split, "clear", f"{base_name}_clear_{neg_extracted}.jpg")
-                        cv2.imwrite(out_path, patch_resized)
-                        clear_count += 1
-                        neg_extracted += 1
+            cv2.imwrite(out_img_path, img_final)
+            cv2.imwrite(out_mask_path, mask_final * 255) # Save as visual mask (0 or 255)
 
-    print(f"Extraction complete! Total Acne patches: {acne_count}, Total Clear patches: {clear_count}")
+    print("Pipeline processing complete!")
 
 if __name__ == "__main__":
-    random.seed(42)
-    extract_patches()
+    process_dataset()

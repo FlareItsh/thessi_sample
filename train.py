@@ -2,114 +2,81 @@ import os
 import cv2
 import glob
 import numpy as np
-import pickle
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
+import tensorflow as tf
 from sklearn.model_selection import train_test_split
+from model import unet_model, dice_coef, dice_loss
 
 # Directories
 DATA_DIR = "/home/flare/Dev/Thesis_Sample/processed_data"
-
-# Hyperparameters
-IMG_SIZE = (64, 64)
-
-def extract_hog_features(img):
-    """
-    Extract Histogram of Oriented Gradients (HOG) features from an image.
-    This provides a good texture/shape representation for traditional ML algorithms.
-    """
-    # Convert to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Initialize HOG descriptor
-    hog = cv2.HOGDescriptor(
-        _winSize=(64, 64),
-        _blockSize=(16, 16),
-        _blockStride=(8, 8),
-        _cellSize=(8, 8),
-        _nbins=9
-    )
-    
-    # Compute HOG features
-    features = hog.compute(gray)
-    return features.flatten()
-
-def extract_color_histogram(img):
-    """
-    Extracts a color histogram which is very useful for detecting redness/discoloration in acne.
-    """
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    hist = cv2.calcHist([hsv], [0, 1, 2], None, [8, 8, 8], [0, 180, 0, 256, 0, 256])
-    cv2.normalize(hist, hist)
-    return hist.flatten()
+IMG_SIZE = (256, 256)
+BATCH_SIZE = 16
+EPOCHS = 20
 
 def load_data(split):
+    """
+    Loads processed images and masks for a given split.
+    """
     X = []
     y = []
     
-    split_dir = os.path.join(DATA_DIR, split)
+    images_dir = os.path.join(DATA_DIR, split, "images")
+    masks_dir = os.path.join(DATA_DIR, split, "masks")
     
-    # Load Clear (Class 0)
-    clear_dir = os.path.join(split_dir, "clear")
-    for img_path in glob.glob(os.path.join(clear_dir, "*.jpg")):
-        img = cv2.imread(img_path)
-        if img is not None:
-            img = cv2.resize(img, IMG_SIZE)
-            hog_feat = extract_hog_features(img)
-            col_feat = extract_color_histogram(img)
-            features = np.hstack([hog_feat, col_feat])
-            X.append(features)
-            y.append(0)
+    image_paths = sorted(glob.glob(os.path.join(images_dir, "*.png")))
+    mask_paths = sorted(glob.glob(os.path.join(masks_dir, "*.png")))
+    
+    for img_path, mask_path in zip(image_paths, mask_paths):
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE) # Already 'a' channel
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        
+        if img is not None and mask is not None:
+            # Normalize
+            X.append(img.astype(np.float32) / 255.0)
+            y.append(mask.astype(np.float32) / 255.0)
             
-    # Load Acne (Class 1)
-    acne_dir = os.path.join(split_dir, "acne")
-    for img_path in glob.glob(os.path.join(acne_dir, "*.jpg")):
-        img = cv2.imread(img_path)
-        if img is not None:
-            img = cv2.resize(img, IMG_SIZE)
-            hog_feat = extract_hog_features(img)
-            col_feat = extract_color_histogram(img)
-            features = np.hstack([hog_feat, col_feat])
-            X.append(features)
-            y.append(1)
-            
-    return np.array(X), np.array(y)
+    X = np.expand_dims(np.array(X), axis=-1)
+    y = np.expand_dims(np.array(y), axis=-1)
+    
+    return X, y
 
 def main():
-    print("Loading training data...")
+    print("Loading data...")
     X_train, y_train = load_data("train")
-    print(f"Loaded {len(y_train)} training samples.")
-    
-    print("Loading validation data...")
     X_valid, y_valid = load_data("valid")
-    print(f"Loaded {len(y_valid)} validation samples.")
-    
-    print("Loading test data...")
     X_test, y_test = load_data("test")
-    print(f"Loaded {len(y_test)} test samples.")
     
-    # We can combine train and valid for scikit-learn training
-    X_train_full = np.vstack((X_train, X_valid))
-    y_train_full = np.concatenate((y_train, y_valid))
-
-    print("Training Random Forest Classifier...")
-    # Random Forest is robust and requires less hyperparameter tuning than SVM
-    clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-    clf.fit(X_train_full, y_train_full)
+    print(f"Train samples: {len(X_train)}")
+    print(f"Valid samples: {len(X_valid)}")
+    print(f"Test samples: {len(X_test)}")
+    
+    # Initialize U-Net model
+    model = unet_model(input_size=(IMG_SIZE[0], IMG_SIZE[1], 1))
+    
+    # Callbacks
+    callbacks = [
+        tf.keras.callbacks.ModelCheckpoint("acne_unet_best.h5", save_best_only=True),
+        tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True),
+        tf.keras.callbacks.ReduceLROnPlateau(factor=0.2, patience=3)
+    ]
+    
+    print("Starting training...")
+    history = model.fit(
+        X_train, y_train,
+        validation_data=(X_valid, y_valid),
+        batch_size=BATCH_SIZE,
+        epochs=EPOCHS,
+        callbacks=callbacks
+    )
     
     print("Evaluating model on Test Set...")
-    y_pred = clf.predict(X_test)
+    results = model.evaluate(X_test, y_test)
+    print(f"Test Loss: {results[0]:.4f}")
+    print(f"Test Dice Coef: {results[1]:.4f}")
+    print(f"Test Accuracy: {results[2]:.4f}")
     
-    acc = accuracy_score(y_test, y_pred)
-    print(f"Test Accuracy: {acc:.4f}")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred, target_names=["Clear", "Acne"]))
-    
-    model_path = "acne_model.pkl"
-    print(f"Saving model to {model_path}...")
-    with open(model_path, "wb") as f:
-        pickle.dump(clf, f)
-    print("Done!")
+    model.save("acne_unet_final.h5")
+    print("Model saved to acne_unet_final.h5")
 
 if __name__ == "__main__":
     main()
+

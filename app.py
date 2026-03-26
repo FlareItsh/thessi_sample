@@ -54,11 +54,16 @@ def detect_acne_opencv(img):
                 # Acne tends to be somewhat circular
                 if circularity > 0.2:
                     acne_count += 1
+                    # Draw a green circle around the detected spot
+                    (x, y), radius = cv2.minEnclosingCircle(contour)
+                    center = (int(x), int(y))
+                    radius = int(radius)
+                    cv2.circle(img, center, radius + 2, (0, 255, 0), 2)
                     
     # 7. Decision logic
     if acne_count >= 1:
-        return f"Acne Detected ({acne_count} spots)"
-    return "No Acne Detected"
+        return f"Acne Detected ({acne_count} spots)", img
+    return "No Acne Detected", img
 
 
 @app.route('/')
@@ -93,8 +98,16 @@ def predict():
          return jsonify({"error": "Failed to decode image"}), 400
 
     try:
-        result = detect_acne_opencv(img)
-        return jsonify({"result": result})
+        result, processed_img = detect_acne_opencv(img)
+        
+        # Encode processed image to base64
+        _, buffer = cv2.imencode('.jpg', processed_img)
+        img_base64 = base64.b64encode(buffer).decode('utf-8')
+        
+        return jsonify({
+            "result": result,
+            "image_base64": f"data:image/jpeg;base64,{img_base64}"
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

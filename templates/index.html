@@ -409,6 +409,9 @@
           const data = await response.json();
 
           if (response.ok) {
+            if (data.image_base64) {
+              imagePreview.src = data.image_base64;
+            }
             showResult(data.result);
           } else {
             showResult(data.error || "An error occurred", true);
