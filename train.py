@@ -8,7 +8,7 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 
 # Directories
-DATA_DIR = "/home/flare/Dev/Thesis_Sample/processed_data"
+DATA_DIR = os.path.join(os.path.dirname(__file__), "processed_data")
 
 # Hyperparameters
 IMG_SIZE = (64, 64)
@@ -48,6 +48,9 @@ def load_data(split):
     y = []
     
     split_dir = os.path.join(DATA_DIR, split)
+    if not os.path.exists(split_dir):
+        print(f"Warning: split directory {split_dir} does not exist.")
+        return np.array([]), np.array([])
     
     # Load Clear (Class 0)
     clear_dir = os.path.join(split_dir, "clear")
@@ -78,32 +81,39 @@ def load_data(split):
 def main():
     print("Loading training data...")
     X_train, y_train = load_data("train")
+    if len(X_train) == 0:
+        print("Error: No training data found.")
+        return
     print(f"Loaded {len(y_train)} training samples.")
     
     print("Loading validation data...")
     X_valid, y_valid = load_data("valid")
-    print(f"Loaded {len(y_valid)} validation samples.")
+    if len(X_valid) > 0:
+        print(f"Loaded {len(y_valid)} validation samples.")
     
     print("Loading test data...")
     X_test, y_test = load_data("test")
-    print(f"Loaded {len(y_test)} test samples.")
+    if len(X_test) > 0:
+        print(f"Loaded {len(y_test)} test samples.")
     
     # We can combine train and valid for scikit-learn training
-    X_train_full = np.vstack((X_train, X_valid))
-    y_train_full = np.concatenate((y_train, y_valid))
+    X_train_full = X_train
+    y_train_full = y_train
+    if len(X_valid) > 0:
+        X_train_full = np.vstack((X_train, X_valid))
+        y_train_full = np.concatenate((y_train, y_valid))
 
     print("Training Random Forest Classifier...")
-    # Random Forest is robust and requires less hyperparameter tuning than SVM
     clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
     clf.fit(X_train_full, y_train_full)
     
-    print("Evaluating model on Test Set...")
-    y_pred = clf.predict(X_test)
-    
-    acc = accuracy_score(y_test, y_pred)
-    print(f"Test Accuracy: {acc:.4f}")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred, target_names=["Clear", "Acne"]))
+    if len(X_test) > 0:
+        print("Evaluating model on Test Set...")
+        y_pred = clf.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        print(f"Test Accuracy: {acc:.4f}")
+        print("\nClassification Report:")
+        print(classification_report(y_test, y_pred, target_names=["Clear", "Acne"]))
     
     model_path = "acne_model.pkl"
     print(f"Saving model to {model_path}...")
